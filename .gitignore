@@ -1,0 +1,23 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+# Virtual environments
+.venv
+.ruff_cache
+
+dataset/
+docs/
+images/
+
+# Local annotation sessions, exports, and exploratory notebooks
+*.project
+*.ipynb
+*_poses.json
+
+# Local evaluator output
+annotation_depth_metrics/
+depth_debug_outputs/
