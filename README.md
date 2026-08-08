@@ -2,22 +2,16 @@ GT annotation tool for 6D Pose Estimation RGBD datasets written in Qt/PySide6.
 
 Uses Procrustes point cloud matching via Kabsch algorithm.
 
-# 사용법
+# Usage
 
-1. [uv](https://github.com/astral-sh/uv)를 다운받습니다. 
+1. Install [uv](https://github.com/astral-sh/uv) 
+
+2. To run: 
 ```bash
-# On Windows.
-powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
+uv run procrustes-annotator
 ```
-```bash
-# On macOS and Linux.
-curl -LsSf https://astral.sh/uv/install.sh | sh
-```
-2. 저장된 프로젝트 열기
+- To open a project:
+  
 ```bash
 uv run procrustes-annotator main.project
 ```
-
-- (프로젝트가 없는 경우)
-```bash
-uv run procrustes-annotator
