@@ -1,3 +1,7 @@
+GT annotation tool for 6D Pose Estimation RGBD datasets written in Qt/PySide6.
+
+Uses Procrustes point cloud matching via Kabsch algorithm.
+
 # 사용법
 
 1. [uv](https://github.com/astral-sh/uv)를 다운받습니다. 
