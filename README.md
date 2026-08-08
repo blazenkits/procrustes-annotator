@@ -15,3 +15,5 @@ uv run procrustes-annotator
 ```bash
 uv run procrustes-annotator main.project
 ```
+
+You may override `DataSet.load()` in loader.py to comply with a custom dataset structure.
