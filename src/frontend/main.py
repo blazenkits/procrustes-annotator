@@ -506,7 +506,7 @@ class AnnotationWindow(QMainWindow):
         configure.triggered.connect(self._configure_shortcuts)
 
         help_menu = self.menuBar().addMenu("&Help")
-        help_action = help_menu.addAction("Shortcuts / 단축키")
+        help_action = help_menu.addAction("사용법")
         help_action.triggered.connect(self._show_help)
 
     def _populate_controls(self) -> None:
@@ -1853,14 +1853,15 @@ def _update_raw_action_label(action: QAction) -> None:
 def _help_html(shortcuts: dict[str, str], *, korean: bool) -> str:
     if korean:
         return f"""
-        <h2>HOPE RGBD 주석 도구</h2>
+        <h2>RGBD Procrustes 주석 도구</h2>
         <h3>작업 순서</h3>
         <ol>
-          <li>3D 메시에서 식별하기 쉬운 점을 모두 왼쪽 클릭으로 선택합니다.</li>
-          <li>RGB 영상을 클릭하면 즉시 RGB 점 입력으로 전환됩니다.</li>
-          <li>RGB 영상에서 같은 점을 번호 순서대로 선택합니다.</li>
-          <li>오버레이 키를 누르고 있으면 자동 계산 후 결과를 표시합니다.</li>
-          <li>주석을 달 수 없는 포즈는 연기 단축키로 표시합니다. 다시 누르면 취소됩니다.</li>
+          <li>왼쪽 창에서 클릭하여 점을 선택합니다.</li>
+          <li>Shift를 누르고 드래그/ WASDQE로 모델을 움직일 수 있습니다.</li> 
+          <li>오른쪽 창에서 클릭하여 매칭되는 점을 순서대로 선택합니다.</li>
+          <li>매칭이 완료된 후 TAB키를 누르면 자동 계산 후 결과를 표시합니다.</li>
+          <li>R 키를 누르면 (Annotation 불가) 상태로 표시할 수 있습니다.</li>
+          <li>X/C키로 전후 이미지로 이동.</li>
         </ol>
         <h3>마우스</h3>
         <p><b>왼쪽 클릭:</b> 클릭한 뷰의 점 추가<br>
@@ -1876,25 +1877,7 @@ def _help_html(shortcuts: dict[str, str], *, korean: bool) -> str:
         """
     return f"""
     <h2>Procrustes Annotator</h2>
-    <h3>Workflow</h3>
-    <ol>
-      <li>Left-click all recognizable landmarks on the 3D mesh.</li>
-      <li>Clicking RGB immediately starts adding RGB observations.</li>
-      <li>Select matching RGB points in model-landmark order.</li>
-      <li>Hold the overlay key to solve automatically and inspect alignment.</li>
-      <li>Use the defer shortcut for an unannotatable pose; press it again to restore.</li>
-    </ol>
-    <h3>Mouse</h3>
-    <p><b>Left click:</b> add a point to the clicked view's list.<br>
-    <b>Right click:</b> remove the clicked view's last point.<br>
-    <b>Ctrl + right click:</b> clear the clicked view's point list.<br>
-    <b>Hold Z:</b> show the RGB magnifier; use the wheel to change zoom.<br>
-    <b>Hold Shift:</b> temporarily activate Navigation mode.<br>
-    Use the top mode button to persistently select Annotate or Navigate.<br>
-    Use <b>View → Show invalid depth regions</b> to toggle the light-red depth mask.<br>
-    An untouched frame previews the last-used model points; its first model edit or RGB click creates an independent copy.</p>
-    <h3>Shortcuts</h3>
-    {_shortcut_table(shortcuts, korean=False)}
+    
     """
 
 
