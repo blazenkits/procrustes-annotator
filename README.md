@@ -20,7 +20,7 @@ You may override `DataSet.load()` in loader.py to comply with a custom dataset s
 
 ## ICP refinement
 
-Refine an exported pose file with single-scale Open3D ICP:
+ICP refinement 스크립트입니다. 수작업 annotation JSON 파일을 넣으면 ICP refinement 된 JSON이 출력됩니다.:
 
 ```bash
 uv run python src/backend/icp.py \
@@ -32,26 +32,11 @@ uv run python src/backend/icp.py \
   --max-correspondence-distance-mm 10
 ```
 
-The backend works in metres, while preserving BOP-style `cam_t_m2c` output in
-millimetres. It uniformly samples the mesh, keeps points visible from the
-camera under the rough pose, unprojects valid RGB-D pixels into camera space,
-and uses the rough model-to-camera transform to initialize ICP. Raw depth 0
-and 65535 are treated as invalid by the dataset loader. Deferred records are
-copied unchanged. Solved records retain their annotation fields, replace the
-pose with the ICP result, and add an `icp` object containing the rough pose,
-fitness, inlier RMSE, correspondence count, parameters, and refined 4x4
-transformation. Object/background masking is intentionally left as a TODO.
+## ICP vs Original Viewer
 
-Review rough and refined poses with the PySide6 overlay viewer:
-
+ICP / Original Pose를 놓고 비교할 수 있는 도구입니다.
 ```bash
 uv run procrustes-icp-viewer \
   --dataset dataset \
   --poses out/main_poses_icp.json
 ```
-
-Press `1` for RGB only, `2` for the rough pose in red, `3` for the ICP pose in
-green, or `4` for both. In the combined 2D view, matching pixels appear yellow.
-Use the top tabs to switch between the 2D RGB overlay and a 3D RGB-D scene. The
-3D tab shows the measured RGB-colored point cloud with translucent, outlined
-rough and ICP meshes using the same `1`–`4` controls.
