@@ -17,6 +17,7 @@ dependencies = [
 
 [project.scripts]
 procrustes-annotator = "src.frontend.main:main"
+procrustes-icp-viewer = "src.tools.icp_viewer:main"
 
 [build-system]
 requires = ["setuptools>=77"]
