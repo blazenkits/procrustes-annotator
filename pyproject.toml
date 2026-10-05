@@ -6,6 +6,7 @@ readme = "README.md"
 requires-python = "==3.12.*"
 dependencies = [
     "numpy>=2.0",
+    "scipy>=1.13",
     "Pillow>=10.0",
     "PySide6>=6.8",
     "pyvista>=0.48",
@@ -15,9 +16,18 @@ dependencies = [
 
 ]
 
+[project.optional-dependencies]
+segmentation = [
+    "huggingface-hub>=0.29",
+    "sam-2 @ git+https://github.com/facebookresearch/sam2.git",
+    "torch>=2.5.1",
+    "torchvision>=0.20.1",
+]
+
 [project.scripts]
 procrustes-annotator = "src.frontend.main:main"
 procrustes-icp-viewer = "src.tools.icp_viewer:main"
+procrustes-silhouette-viewer = "src.tools.silhouette_sweep_viewer:main"
 
 [build-system]
 requires = ["setuptools>=77"]

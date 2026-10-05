@@ -15,6 +15,7 @@ from src.backend.loader import Pose
 
 ROUGH_COLOR = "#eb2d37"
 ICP_COLOR = "#23dc5a"
+GT_COLOR = "#3ca0ff"
 
 
 def transform_points_to_camera(
@@ -39,7 +40,8 @@ class ICPSceneView(QWidget):
     """Show an RGB-colored depth cloud with rough/refined mesh outlines.
 
     Modes follow the 2D viewer: 1 shows only the measured point cloud, 2 adds
-    the rough red mesh, 3 adds the refined green mesh, and 4 adds both.
+    the rough red mesh, 3 adds the refined green mesh, and 4 adds both. Ground
+    truth is an independent blue layer that can be toggled in every mode.
     """
 
     def __init__(
@@ -57,6 +59,8 @@ class ICPSceneView(QWidget):
         self._point_actor = None
         self._rough_actor = None
         self._icp_actor = None
+        self._gt_actor = None
+        self._show_ground_truth = False
         self._camera_initialized = False
 
         layout = QVBoxLayout(self)
@@ -75,11 +79,15 @@ class ICPSceneView(QWidget):
         icp_rotation_m2c: np.ndarray,
         icp_translation_m2c_m: np.ndarray,
         *,
+        gt_rotation_m2c: np.ndarray | None = None,
+        gt_translation_m2c_m: np.ndarray | None = None,
         model_scale: float = 0.001,
     ) -> None:
         """Replace the frame cloud and both posed mesh actors."""
         if model_scale <= 0:
             raise ValueError("model_scale must be positive.")
+        if (gt_rotation_m2c is None) != (gt_translation_m2c_m is None):
+            raise ValueError("GT rotation and translation must be supplied together.")
         self._remove_scene_actors()
 
         rgbd_cloud = image_to_point_cloud(
@@ -120,8 +128,18 @@ class ICPSceneView(QWidget):
         self._icp_actor = self._add_outline_mesh(
             icp_mesh, name="icp-model", color=ICP_COLOR
         )
+        focus_meshes = [rough_mesh, icp_mesh]
+        if gt_rotation_m2c is not None and gt_translation_m2c_m is not None:
+            gt_mesh = model.copy(deep=True)
+            gt_mesh.points = transform_points_to_camera(
+                model.points, gt_rotation_m2c, gt_translation_m2c_m
+            )
+            self._gt_actor = self._add_outline_mesh(
+                gt_mesh, name="gt-model", color=GT_COLOR
+            )
+            focus_meshes.append(gt_mesh)
         self._update_actor_visibility()
-        self._focus_camera(rough_mesh, icp_mesh)
+        self._focus_camera(*focus_meshes)
         self.plotter.render()
 
     def set_mode(self, mode: int) -> None:
@@ -130,6 +148,36 @@ class ICPSceneView(QWidget):
             raise ValueError("3D scene mode must be 1, 2, 3, or 4.")
         self._mode = mode
         self._update_actor_visibility()
+        self.plotter.render()
+
+    def set_ground_truth_visible(self, visible: bool) -> None:
+        """Show or hide the optional ground-truth mesh independently of mode."""
+        self._show_ground_truth = bool(visible)
+        self._update_actor_visibility()
+        self.plotter.render()
+
+    def set_refined_pose(
+        self,
+        model_path: str | Path,
+        rotation_m2c: np.ndarray,
+        translation_m2c_m: np.ndarray,
+        *,
+        model_scale: float = 0.001,
+    ) -> None:
+        """Replace only the refined mesh while preserving cloud and camera state."""
+        if model_scale <= 0:
+            raise ValueError("model_scale must be positive.")
+        model = self._load_model(model_path, model_scale)
+        refined_mesh = model.copy(deep=True)
+        refined_mesh.points = transform_points_to_camera(
+            model.points, rotation_m2c, translation_m2c_m
+        )
+        self.plotter.remove_actor("icp-model", reset_camera=False, render=False)
+        self._icp_actor = self._add_outline_mesh(
+            refined_mesh, name="icp-model", color=ICP_COLOR
+        )
+        self._update_actor_visibility()
+        self.plotter.reset_camera_clipping_range()
         self.plotter.render()
 
     def _load_model(self, model_path: str | Path, model_scale: float) -> pv.PolyData:
@@ -163,11 +211,12 @@ class ICPSceneView(QWidget):
         )
 
     def _remove_scene_actors(self) -> None:
-        for name in ("rgbd-point-cloud", "rough-model", "icp-model"):
+        for name in ("rgbd-point-cloud", "rough-model", "icp-model", "gt-model"):
             self.plotter.remove_actor(name, reset_camera=False, render=False)
         self._point_actor = None
         self._rough_actor = None
         self._icp_actor = None
+        self._gt_actor = None
 
     def _update_actor_visibility(self) -> None:
         if self._point_actor is not None:
@@ -176,10 +225,14 @@ class ICPSceneView(QWidget):
             self._rough_actor.SetVisibility(self._mode in (2, 4))
         if self._icp_actor is not None:
             self._icp_actor.SetVisibility(self._mode in (3, 4))
+        if self._gt_actor is not None:
+            self._gt_actor.SetVisibility(self._show_ground_truth)
 
-    def _focus_camera(self, rough_mesh: pv.PolyData, icp_mesh: pv.PolyData) -> None:
+    def _focus_camera(self, *meshes: pv.PolyData) -> None:
         """Track the object without allowing distant sensor glitches to set zoom."""
-        points = np.vstack((rough_mesh.points, icp_mesh.points))
+        if not meshes:
+            raise ValueError("At least one posed mesh is required to focus the camera.")
+        points = np.vstack([mesh.points for mesh in meshes])
         center = (points.min(axis=0) + points.max(axis=0)) / 2.0
         diameter = max(
             float(np.linalg.norm(points.max(axis=0) - points.min(axis=0))), 0.05

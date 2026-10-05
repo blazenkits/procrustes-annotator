@@ -94,7 +94,7 @@ class DataSet:
         self.poses: dict[str, list[Pose]] = {"0": list(frames.values())}
 
     @classmethod
-    def load(cls, path: str | Path) -> "DataSet":
+    def load(cls, path: str | Path, *, depth_preset: int | None = None) -> "DataSet":
         """Load complete frames from a BOP-style dataset directory.
 
         Frames that lack RGB, depth, or camera intrinsics are skipped and
@@ -105,11 +105,15 @@ class DataSet:
         if not root.is_dir():
             raise FileNotFoundError(f"Dataset directory does not exist: {root}")
 
-        camera_path = root / "scene_camera.json"
+        # Turntable archives keep models at the root and captures below train/.
+        # The manual UI requests preset 2; GPU refinement requests preset 1.
+        # Other callers retain the historical default of preset 1.
+        capture_root = root / "train" if (root / "train" / "scene_camera.json").is_file() else root
+        camera_path = capture_root / "scene_camera.json"
         if not camera_path.is_file():
             raise FileNotFoundError(f"Missing camera metadata: {camera_path}")
         camera_data = _read_json(camera_path)
-        ground_truth_path = root / "scene_gt.json"
+        ground_truth_path = capture_root / "scene_gt.json"
         ground_truth = _read_json(ground_truth_path) if ground_truth_path.is_file() else {}
 
         models = _load_models(root / "models")
@@ -119,8 +123,11 @@ class DataSet:
         for key in frame_keys:
             frame_id = int(key)
             camera = camera_data.get(key)
-            rgb_path = root / "rgb" / f"{frame_id:06}.png"
-            depth_path = root / "depth" / f"{frame_id:06}.png"
+            rgb_path = capture_root / "rgb" / f"{frame_id:06}.png"
+            depth_dir = capture_root / "depth"
+            if any((depth_dir / str(index)).is_dir() for index in (0, 1, 2)):
+                depth_dir = depth_dir / str(1 if depth_preset is None else depth_preset)
+            depth_path = depth_dir / f"{frame_id:06}.png"
             missing = [
                 name
                 for name, present in (

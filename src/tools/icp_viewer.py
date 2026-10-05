@@ -29,19 +29,20 @@ from PySide6.QtWidgets import (
 )
 
 try:
-    from ..backend.loader import DataSet, Pose
+    from ..backend.loader import DataSet, Pose, ReferenceInstance
     from ..frontend.image_view import ImageView
     from .icp_scene_view import ICPSceneView
 except ImportError:  # pragma: no cover - direct ``python src/tools/...`` use.
     repository_root = Path(__file__).resolve().parents[2]
     sys.path.insert(0, str(repository_root))
-    from src.backend.loader import DataSet, Pose
+    from src.backend.loader import DataSet, Pose, ReferenceInstance
     from src.frontend.image_view import ImageView
     from src.tools.icp_scene_view import ICPSceneView
 
 
 ROUGH_COLOR = (235, 45, 55)
 ICP_COLOR = (35, 220, 90)
+GT_COLOR = (60, 160, 255)
 OVERLAP_COLOR = (255, 210, 35)
 
 
@@ -75,6 +76,38 @@ def load_review_poses(path: str | Path) -> list[ReviewPose]:
     if not isinstance(document, dict):
         raise ValueError(f"Expected a JSON object in {input_path}.")
     return parse_review_poses(document)
+
+
+def load_reference_instances(
+    path: str | Path,
+) -> dict[int, tuple[ReferenceInstance, ...]]:
+    """Load a BOP scene-GT document for viewer-only reference overlays."""
+    input_path = Path(path).expanduser().resolve()
+    with input_path.open(encoding="utf-8") as file:
+        document = json.load(file)
+    if not isinstance(document, dict):
+        raise ValueError(f"Expected a JSON object in {input_path}.")
+    result: dict[int, tuple[ReferenceInstance, ...]] = {}
+    for raw_frame_id, records in document.items():
+        frame_id = int(raw_frame_id)
+        if not isinstance(records, list):
+            raise ValueError(f"GT frame {frame_id} must contain a list.")
+        result[frame_id] = tuple(
+            ReferenceInstance(
+                object_id=int(record["obj_id"]),
+                rotation_m2c=_finite_array(
+                    record["cam_R_m2c"], (3, 3), f"frame {frame_id} GT rotation"
+                ),
+                translation_m2c=_finite_array(
+                    record["cam_t_m2c"],
+                    (3,),
+                    f"frame {frame_id} GT translation",
+                )
+                / 1000.0,
+            )
+            for record in records
+        )
+    return result
 
 
 def parse_review_poses(document: dict[str, Any]) -> list[ReviewPose]:
@@ -135,6 +168,56 @@ def parse_review_poses(document: dict[str, Any]) -> list[ReviewPose]:
     return sorted(poses, key=lambda pose: (pose.frame_id, pose.object_id))
 
 
+def select_closest_reference_instance(
+    reference_instances: Iterable[ReferenceInstance],
+    object_id: int,
+    model_points_m: np.ndarray,
+    rough_rotation_m2c: np.ndarray,
+    rough_translation_m2c_m: np.ndarray,
+) -> ReferenceInstance | None:
+    """Match a review record to the same-ID GT instance nearest its rough pose."""
+    candidates = [
+        instance
+        for instance in reference_instances
+        if instance.object_id == object_id
+    ]
+    if not candidates:
+        return None
+    def mean_add(instance: ReferenceInstance) -> float:
+        return pose_add_mm(
+            model_points_m,
+            rough_rotation_m2c,
+            rough_translation_m2c_m,
+            instance.rotation_m2c,
+            instance.translation_m2c,
+        )
+
+    return min(candidates, key=mean_add)
+
+
+def pose_add_mm(
+    model_points_m: np.ndarray,
+    rotation_a_m2c: np.ndarray,
+    translation_a_m2c_m: np.ndarray,
+    rotation_b_m2c: np.ndarray,
+    translation_b_m2c_m: np.ndarray,
+) -> float:
+    """Compute fixed-correspondence ADD between two poses in millimetres."""
+    points = np.asarray(model_points_m, dtype=np.float64).reshape(-1, 3)
+    if not len(points) or not np.isfinite(points).all():
+        raise ValueError("ADD requires at least one finite model point.")
+    if len(points) > 10_000:
+        indices = np.linspace(0, len(points) - 1, 10_000).astype(int)
+        points = points[indices]
+    rotation_a = np.asarray(rotation_a_m2c, dtype=np.float64).reshape(3, 3)
+    rotation_b = np.asarray(rotation_b_m2c, dtype=np.float64).reshape(3, 3)
+    translation_a = np.asarray(translation_a_m2c_m, dtype=np.float64).reshape(3)
+    translation_b = np.asarray(translation_b_m2c_m, dtype=np.float64).reshape(3)
+    transformed_a = points @ rotation_a.T + translation_a
+    transformed_b = points @ rotation_b.T + translation_b
+    return float(np.mean(np.linalg.norm(transformed_a - transformed_b, axis=1)) * 1000.0)
+
+
 def _finite_array(value: object, shape: tuple[int, ...], label: str) -> np.ndarray:
     array = np.asarray(value, dtype=np.float64)
     try:
@@ -192,6 +275,16 @@ def project_mesh_overlay(
     return overlay
 
 
+def overlay_pose_layer(base: np.ndarray, layer: np.ndarray) -> np.ndarray:
+    """Place one fixed-color pose layer above an existing RGBA overlay."""
+    if base.shape != layer.shape or base.dtype != np.uint8 or layer.dtype != np.uint8:
+        raise ValueError("Pose overlays must be matching uint8 RGBA arrays.")
+    output = base.copy()
+    mask = layer[..., 3] > 0
+    output[mask] = layer[mask]
+    return output
+
+
 def combine_pose_overlays(rough: np.ndarray, refined: np.ndarray) -> np.ndarray:
     """Composite rough/red and ICP/green overlays, using yellow for agreement."""
     if rough.shape != refined.shape or rough.dtype != np.uint8 or refined.dtype != np.uint8:
@@ -215,12 +308,14 @@ class ICPViewerWindow(QMainWindow):
         dataset: DataSet,
         review_poses: list[ReviewPose],
         *,
+        reference_instances: dict[int, tuple[ReferenceInstance, ...]] | None = None,
         model_scale: float = 0.001,
     ) -> None:
         super().__init__()
         if model_scale <= 0:
             raise ValueError("model_scale must be positive.")
         self.dataset = dataset
+        self.reference_instances = reference_instances
         self.model_scale = model_scale
         self.review_poses = [
             review_pose
@@ -232,6 +327,8 @@ class ICPViewerWindow(QMainWindow):
             raise ValueError("No refined records have both a dataset frame and object model.")
         self._mesh_points: dict[int, np.ndarray] = {}
         self._mode = ViewerMode.Normal
+        self._show_ground_truth = False
+        self._current_ground_truth: ReferenceInstance | None = None
         self._shortcuts: list[QShortcut] = []
         self._mode_buttons: dict[ViewerMode, QPushButton] = {}
 
@@ -282,6 +379,11 @@ class ICPViewerWindow(QMainWindow):
             controls.addWidget(button)
             self._mode_buttons[mode] = button
         self._mode_buttons[self._mode].setChecked(True)
+        controls.addSpacing(12)
+        self.gt_button = QPushButton("Q  GT (blue)")
+        self.gt_button.setCheckable(True)
+        self.gt_button.clicked.connect(self.set_ground_truth_visible)
+        controls.addWidget(self.gt_button)
         controls.addStretch(1)
         layout.addLayout(controls)
 
@@ -310,6 +412,9 @@ class ICPViewerWindow(QMainWindow):
             shortcut = QShortcut(QKeySequence(str(mode.value)), self)
             shortcut.activated.connect(lambda value=mode: self.set_mode(value))
             self._shortcuts.append(shortcut)
+        gt_shortcut = QShortcut(QKeySequence("Q"), self)
+        gt_shortcut.activated.connect(self.toggle_ground_truth)
+        self._shortcuts.append(gt_shortcut)
 
     def _load_selection(self, _index: int = -1) -> None:
         if self.pose_selector.currentIndex() < 0:
@@ -317,6 +422,18 @@ class ICPViewerWindow(QMainWindow):
         review_pose = self.current_review_pose
         pose = self.dataset[review_pose.frame_id]
         self.image_view.set_image(pose.rgb)
+        self._current_ground_truth = select_closest_reference_instance(
+            (
+                pose.reference_instances
+                if self.reference_instances is None
+                else self.reference_instances.get(review_pose.frame_id, ())
+            ),
+            review_pose.object_id,
+            self._model_points(review_pose.object_id),
+            review_pose.rough_rotation_m2c,
+            review_pose.rough_translation_m2c_m,
+        )
+        ground_truth = self._current_ground_truth
         self.scene_view.set_scene(
             pose,
             self.dataset.models[review_pose.object_id].mesh_path,
@@ -324,9 +441,17 @@ class ICPViewerWindow(QMainWindow):
             review_pose.rough_translation_m2c_m,
             review_pose.icp_rotation_m2c,
             review_pose.icp_translation_m2c_m,
+            gt_rotation_m2c=(
+                None if ground_truth is None else ground_truth.rotation_m2c
+            ),
+            gt_translation_m2c_m=(
+                None if ground_truth is None else ground_truth.translation_m2c
+            ),
             model_scale=self.model_scale,
         )
+        self.gt_button.setEnabled(ground_truth is not None)
         self.scene_view.set_mode(self._mode.value)
+        self.scene_view.set_ground_truth_visible(self._show_ground_truth)
         self._refresh_overlay()
         self._update_details()
         index = self.pose_selector.currentIndex()
@@ -340,8 +465,19 @@ class ICPViewerWindow(QMainWindow):
         self._refresh_overlay()
         self._update_details()
 
+    def set_ground_truth_visible(self, visible: bool) -> None:
+        """Toggle the optional GT layer in both the 2D and 3D views."""
+        self._show_ground_truth = bool(visible)
+        self.gt_button.setChecked(self._show_ground_truth)
+        self.scene_view.set_ground_truth_visible(self._show_ground_truth)
+        self._refresh_overlay()
+        self._update_details()
+
+    def toggle_ground_truth(self) -> None:
+        self.set_ground_truth_visible(not self._show_ground_truth)
+
     def _refresh_overlay(self) -> None:
-        if self.pose_selector.currentIndex() < 0 or self._mode is ViewerMode.Normal:
+        if self.pose_selector.currentIndex() < 0:
             self.image_view.set_overlay(None)
             return
         review_pose = self.current_review_pose
@@ -349,6 +485,7 @@ class ICPViewerWindow(QMainWindow):
         points = self._model_points(review_pose.object_id)
         rough = None
         refined = None
+        ground_truth = None
         if self._mode in (ViewerMode.Rough, ViewerMode.RoughAndICP):
             rough = project_mesh_overlay(
                 points,
@@ -365,10 +502,25 @@ class ICPViewerWindow(QMainWindow):
                 review_pose.icp_translation_m2c_m,
                 ICP_COLOR,
             )
+        if self._show_ground_truth and self._current_ground_truth is not None:
+            reference = self._current_ground_truth
+            ground_truth = project_mesh_overlay(
+                points,
+                pose,
+                reference.rotation_m2c,
+                reference.translation_m2c,
+                GT_COLOR,
+            )
         if rough is not None and refined is not None:
             overlay = combine_pose_overlays(rough, refined)
         else:
             overlay = rough if rough is not None else refined
+        if ground_truth is not None:
+            overlay = (
+                ground_truth
+                if overlay is None
+                else overlay_pose_layer(overlay, ground_truth)
+            )
         self.image_view.set_overlay(overlay)
 
     def _model_points(self, object_id: int) -> np.ndarray:
@@ -388,8 +540,34 @@ class ICPViewerWindow(QMainWindow):
             ViewerMode.ICP: "ICP pose — green",
             ViewerMode.RoughAndICP: "Rough red · ICP green · overlap yellow",
         }[self._mode]
+        if self._current_ground_truth is None:
+            gt_text = "GT unavailable"
+        else:
+            reference = self._current_ground_truth
+            points = self._model_points(review_pose.object_id)
+            raw_add_mm = pose_add_mm(
+                points,
+                review_pose.rough_rotation_m2c,
+                review_pose.rough_translation_m2c_m,
+                reference.rotation_m2c,
+                reference.translation_m2c,
+            )
+            refined_add_mm = pose_add_mm(
+                points,
+                review_pose.icp_rotation_m2c,
+                review_pose.icp_translation_m2c_m,
+                reference.rotation_m2c,
+                reference.translation_m2c,
+            )
+            visibility = "ON" if self._show_ground_truth else "off"
+            gt_text = (
+                f"GT blue: {visibility} (Q)    |    "
+                f"ADD GT↔raw {raw_add_mm:.3f} mm    |    "
+                f"ADD GT↔refined {refined_add_mm:.3f} mm"
+            )
         self.details_label.setText(
-            f"{mode_text}    |    fitness {review_pose.fitness:.4f}    |    "
+            f"{mode_text}    |    {gt_text}    |    "
+            f"fitness {review_pose.fitness:.4f}    |    "
             f"ICP inlier RMSE {review_pose.inlier_rmse_mm:.3f} mm    |    "
             f"correspondences {review_pose.correspondence_count:,}"
         )
@@ -427,6 +605,15 @@ def _parse_args(argv: Iterable[str] | None = None) -> argparse.Namespace:
         default=0.001,
         help="PLY coordinate-to-metre scale (default: 0.001)",
     )
+    parser.add_argument(
+        "--ground-truth",
+        type=Path,
+        default=None,
+        help=(
+            "Optional full BOP scene_gt JSON used only for GT overlays and ADD; "
+            "defaults to the dataset scene_gt.json"
+        ),
+    )
     return parser.parse_args(list(argv) if argv is not None else None)
 
 
@@ -438,7 +625,17 @@ def main(argv: Iterable[str] | None = None) -> int:
             warnings.simplefilter("ignore")
             dataset = DataSet.load(args.dataset)
         review_poses = load_review_poses(args.poses)
-        window = ICPViewerWindow(dataset, review_poses, model_scale=args.model_scale)
+        reference_instances = (
+            None
+            if args.ground_truth is None
+            else load_reference_instances(args.ground_truth)
+        )
+        window = ICPViewerWindow(
+            dataset,
+            review_poses,
+            reference_instances=reference_instances,
+            model_scale=args.model_scale,
+        )
     except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError) as error:
         QMessageBox.critical(None, "Cannot start ICP viewer", str(error))
         return 1

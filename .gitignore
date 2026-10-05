@@ -1,29 +1,31 @@
-# Python-generated files
+# Python-generated files and build artifacts
 __pycache__/
 *.py[oc]
 build/
 dist/
 wheels/
-*.egg-info
-# Virtual environments
-.venv
-.ruff_cache
+*.egg-info/
+.venv/
+.ruff_cache/
+.pytest_cache/
 
+# Local datasets, exploratory files, and generated outputs
 dataset/
+data/
 docs/
 images/
 out/
 out*
 results
 *.kate-swp
-*.project
 *.zip
-
-# Local annotation sessions, exports, and exploratory notebooks
-*.project
 *.ipynb
 *.json
-
-# Local evaluator output
 annotation_depth_metrics/
 depth_debug_outputs/
+
+# Local annotation state and exports. These can contain user annotations,
+# prompted masks, or self-contained RGB-D/CAD GPU jobs.
+*.project
+annotation*_masks/
+*_masks/

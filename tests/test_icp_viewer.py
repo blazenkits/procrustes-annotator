@@ -7,13 +7,18 @@ from types import SimpleNamespace
 
 import numpy as np
 
+from src.backend.loader import ReferenceInstance
 from src.tools.icp_viewer import (
+    GT_COLOR,
     ICP_COLOR,
     OVERLAP_COLOR,
     ROUGH_COLOR,
     combine_pose_overlays,
+    overlay_pose_layer,
     parse_review_poses,
+    pose_add_mm,
     project_mesh_overlay,
+    select_closest_reference_instance,
 )
 from src.tools.icp_scene_view import transform_points_to_camera
 
@@ -54,6 +59,32 @@ class ICPViewerTests(unittest.TestCase):
         np.testing.assert_allclose(review_pose.rough_translation_m2c_m, [0.005, 0.015, 0.59])
         np.testing.assert_allclose(review_pose.icp_translation_m2c_m, [0.01, 0.02, 0.6])
 
+    def test_closest_same_id_ground_truth_is_selected_by_rough_add(self) -> None:
+        identity = np.eye(3)
+        wrong_object = ReferenceInstance(8, identity, np.array([0.0, 0.0, 1.0]))
+        distant = ReferenceInstance(3, identity, np.array([0.2, 0.0, 1.0]))
+        closest = ReferenceInstance(3, identity, np.array([0.01, 0.0, 1.0]))
+        selected = select_closest_reference_instance(
+            (wrong_object, distant, closest),
+            3,
+            np.array([[0.0, 0.0, 0.0], [0.02, 0.01, 0.03]]),
+            identity,
+            np.array([0.0, 0.0, 1.0]),
+        )
+
+        self.assertIs(selected, closest)
+
+    def test_pose_add_reports_millimetres(self) -> None:
+        add_mm = pose_add_mm(
+            np.array([[0.0, 0.0, 0.0], [0.02, 0.01, 0.03]]),
+            np.eye(3),
+            np.array([0.0, 0.0, 1.0]),
+            np.eye(3),
+            np.array([0.003, 0.004, 1.0]),
+        )
+
+        self.assertAlmostEqual(add_mm, 5.0)
+
     def test_projection_and_combined_overlap_colors(self) -> None:
         pose = SimpleNamespace(
             rgb=np.zeros((21, 21, 3), dtype=np.uint8),
@@ -70,6 +101,12 @@ class ICPViewerTests(unittest.TestCase):
         combined = combine_pose_overlays(rough, refined)
         self.assertTupleEqual(tuple(combined[10, 10, :3]), OVERLAP_COLOR)
         self.assertGreater(int(combined[10, 10, 3]), 0)
+
+        ground_truth = project_mesh_overlay(
+            points, pose, np.eye(3), np.zeros(3), GT_COLOR
+        )
+        with_ground_truth = overlay_pose_layer(combined, ground_truth)
+        self.assertTupleEqual(tuple(with_ground_truth[10, 10, :3]), GT_COLOR)
 
 
 if __name__ == "__main__":
