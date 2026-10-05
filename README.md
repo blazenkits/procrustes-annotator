@@ -1,15 +1,6 @@
 # Multi-object Procrustes annotator
 
-An RGB-D annotation app for a fixed camera and rotating turntable. Human
-Procrustes poses are the starting observations; a joint rigid setup fit can
-infer occluded objects after enough frame/object pairs have been solved.
-
-## Start annotating
-
-Manual Procrustes clicks use High Density depth (`train/depth/2` when available);
-GPU refinement and its rendered-depth RMSE use High Accuracy depth
-(`train/depth/1` when available). Give the app a local BOP-style dataset folder
-containing RGB, depth, camera metadata, and CAD meshes:
+# 사용법
 
 ```bash
 uv sync
